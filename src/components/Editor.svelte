@@ -7,6 +7,61 @@ let textarea: HTMLTextAreaElement;
 
 $: if (text !== undefined) dispatch('change', text);
 
+// Image handling functions
+function saveImageLocally(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const imageData = e.target?.result as string;
+      const imageId = crypto.randomUUID();
+      const imageKey = `ia:image:${imageId}`;
+      
+      // Store image data in localStorage
+      localStorage.setItem(imageKey, imageData);
+      
+      // Store image metadata
+      const metadata = {
+        id: imageId,
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        timestamp: Date.now()
+      };
+      
+      const existingImages = JSON.parse(localStorage.getItem('ia:images') || '[]');
+      existingImages.push(metadata);
+      localStorage.setItem('ia:images', JSON.stringify(existingImages));
+      
+      resolve(imageData);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function handlePaste(event: ClipboardEvent) {
+  const clipboardData = event.clipboardData;
+  if (!clipboardData) return;
+  
+  // Check if clipboard contains image files
+  const items = Array.from(clipboardData.items);
+  const imageItem = items.find(item => item.type.startsWith('image/'));
+  
+  if (imageItem) {
+    event.preventDefault();
+    const file = imageItem.getAsFile();
+    if (file) {
+      saveImageLocally(file).then(imagePath => {
+        const imageMarkdown = `![${file.name || 'Pasted Image'}](${imagePath})`;
+        insertAtCursor(imageMarkdown);
+      }).catch(err => {
+        console.error('Failed to save image:', err);
+        // Fallback: insert placeholder markdown
+        insertAtCursor('![Failed to save image](path/to/image.png)');
+      });
+    }
+  }
+}
+
 function onInput() {
   text = textarea.value;
 }
@@ -26,6 +81,13 @@ function tokenize(s: string) {
     if (li) {
       const [, pre, marker, rest] = li;
       return `${esc(pre)}<span class="list"><span class="marker">${esc(marker)}</span><span class="list-text">${esc(rest)}</span></span>`;
+    }
+
+    // image: render with visible markdown syntax
+    const img = line.match(/^(\s*)!\[([^\]]*)\]\(([^)]+)\)(.*)$/);
+    if (img) {
+      const [, pre, alt, src, rest] = img;
+      return `${esc(pre)}<span class="image"><span class="marker">![</span><span class="alt-text">${esc(alt)}</span><span class="marker">](</span><span class="image-src">${esc(src)}</span><span class="marker">)</span></span>${esc(rest)}`;
     }
 
     // bold markers: keep ** visible but style inner text
@@ -110,6 +172,8 @@ function handleKeydown(e: KeyboardEvent) {
 :global(.highlighter .heading-text) { color: var(--heading-color, #b83280); }
 :global(.highlighter .list-text) { color: var(--list-color, #6b7280); }
 :global(.highlighter .bold-text) { color: var(--bold-color, #111827); }
+:global(.highlighter .image .alt-text) { color: var(--image-alt-color, #059669); }
+:global(.highlighter .image .image-src) { color: var(--image-src-color, #0284c7); }
 .textarea {
   position: relative;
   width: 100%;
@@ -172,6 +236,6 @@ function handleKeydown(e: KeyboardEvent) {
 
 <div class="container editor">
   <pre class="highlighter" aria-hidden="true" on:mousedown|preventDefault>{@html tokenize(text)}</pre>
-  <textarea class="textarea" bind:this={textarea} bind:value={text} on:input={onInput} on:keydown={handleKeydown}></textarea>
+  <textarea class="textarea" bind:this={textarea} bind:value={text} on:input={onInput} on:keydown={handleKeydown} on:paste={handlePaste}></textarea>
 </div>
  

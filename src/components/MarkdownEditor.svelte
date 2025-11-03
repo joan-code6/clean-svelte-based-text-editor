@@ -9,6 +9,7 @@ import { tags as t } from '@lezer/highlight';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { StateEffect, StateField } from '@codemirror/state';
 import { Decoration, DecorationSet, WidgetType } from '@codemirror/view';
+import { RangeSet } from '@codemirror/state';
 
 export let value: string = '';
 export let readOnly = false;
@@ -19,6 +20,56 @@ export let fontSize: number = parseInt(localStorage.getItem('ia:fontSize') || '2
 const dispatch = createEventDispatcher();
 let container: HTMLDivElement;
 let view: EditorView;
+
+// Image handling functions
+function saveImageLocally(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const imageData = e.target?.result as string;
+      const imageId = crypto.randomUUID();
+      const imageKey = `ia:image:${imageId}`;
+      
+      // Store image data in localStorage
+      localStorage.setItem(imageKey, imageData);
+      
+      // Store image metadata
+      const metadata = {
+        id: imageId,
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        timestamp: Date.now()
+      };
+      
+      const existingImages = JSON.parse(localStorage.getItem('ia:images') || '[]');
+      existingImages.push(metadata);
+      localStorage.setItem('ia:images', JSON.stringify(existingImages));
+      
+      resolve(`data:${file.type};base64,${imageData.split(',')[1]}`);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function insertImageMarkdown(imagePath: string, altText: string = 'Pasted Image'): void {
+  if (!view) return;
+  
+  const imageMarkdown = `![${altText}](${imagePath})`;
+  const state = view.state;
+  const cursor = state.selection.main.head;
+  
+  // Insert image markdown at cursor position
+  view.dispatch({
+    changes: {
+      from: cursor,
+      insert: imageMarkdown
+    },
+    selection: {
+      anchor: cursor + imageMarkdown.length
+    }
+  });
+}
 
 // custom highlight style that keeps punctuation (markers) visible but styles text
 const highlightStyle = HighlightStyle.define([
@@ -70,6 +121,48 @@ class FoldWidget extends WidgetType {
   ignoreEvent() { return false; }
 }
 
+class ImageWidget extends WidgetType {
+  src: string;
+  alt: string;
+  constructor(src: string, alt: string) { 
+    super(); 
+    this.src = src; 
+    this.alt = alt;
+  }
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-image-widget';
+    wrap.style.margin = '12px 0';
+    wrap.style.padding = '0';
+    wrap.style.display = 'block';
+    wrap.style.textAlign = 'center';
+    
+    const img = document.createElement('img');
+    img.src = this.src;
+    img.alt = this.alt;
+    img.style.maxWidth = '100%';
+    img.style.height = 'auto';
+    img.style.display = 'block';
+    img.style.borderRadius = '6px';
+    img.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
+    img.style.cursor = 'pointer';
+    img.style.margin = '0 auto';
+    
+    // Add click handler to show markdown on hover/click for editing
+    img.addEventListener('mouseenter', () => {
+      img.style.opacity = '0.8';
+    });
+    
+    img.addEventListener('mouseleave', () => {
+      img.style.opacity = '1';
+    });
+    
+    wrap.appendChild(img);
+    return wrap;
+  }
+  ignoreEvent() { return false; }
+}
+
 const foldField = StateField.define<DecorationSet>({
   create() { return Decoration.none; },
   update(deco, tr) {
@@ -96,6 +189,44 @@ const foldField = StateField.define<DecorationSet>({
   },
   provide: f => EditorView.decorations.from(f)
 });
+
+const imageField = StateField.define<DecorationSet>({
+  create(state) {
+    return buildImageDecorations(state);
+  },
+  update(deco, tr) {
+    if (tr.docChanged) {
+      return buildImageDecorations(tr.state);
+    }
+    return deco.map(tr.changes);
+  },
+  provide: f => EditorView.decorations.from(f)
+});
+
+function buildImageDecorations(state: any): DecorationSet {
+  const decorations: any[] = [];
+  const doc = state.doc;
+  
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    const text = line.text;
+    const imageMatch = text.match(/!\[([^\]]*)\]\(([^)]+)\)/);
+    
+    if (imageMatch) {
+      const [fullMatch, alt, src] = imageMatch;
+      const start = line.from + text.indexOf(fullMatch);
+      const end = start + fullMatch.length;
+      
+      // Replace the entire markdown image syntax with the image widget
+      const widget = Decoration.replace({ 
+        widget: new ImageWidget(src, alt)
+      });
+      decorations.push(widget.range(start, end));
+    }
+  }
+  
+  return RangeSet.of(decorations);
+}
 
 // reactive theme extension for font size (applied on mount)
 let fontSizeTheme = EditorView.theme({ '.cm-scroller': { fontSize: `${fontSize}px`, lineHeight: '1.6', padding: '32px 0 120px' } });
@@ -157,7 +288,35 @@ function baseExtensions(): Extension[] {
   syntaxHighlighting(highlightStyle),
   minimalistTheme,
   foldField,
+  imageField,
   EditorView.domEventHandlers({
+    paste: (event: ClipboardEvent, view: EditorView) => {
+      if (readOnly) return false;
+      
+      const clipboardData = event.clipboardData;
+      if (!clipboardData) return false;
+      
+      // Check if clipboard contains image files
+      const items = Array.from(clipboardData.items);
+      const imageItem = items.find(item => item.type.startsWith('image/'));
+      
+      if (imageItem) {
+        event.preventDefault();
+        const file = imageItem.getAsFile();
+        if (file) {
+          saveImageLocally(file).then(imagePath => {
+            insertImageMarkdown(imagePath, file.name || 'Pasted Image');
+          }).catch(err => {
+            console.error('Failed to save image:', err);
+            // Fallback: insert placeholder markdown
+            insertImageMarkdown('path/to/image.png', 'Failed to save image');
+          });
+        }
+        return true;
+      }
+      
+      return false;
+    },
     click: (e: MouseEvent, view: EditorView) => {
       const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
       if (pos == null) return false;
@@ -247,6 +406,34 @@ export function focus() { view?.focus(); }
 
 <style>
 .wrapper { height: 100%; }
+
+/* Image widget styles */
+:global(.cm-image-widget) {
+  margin: 12px 0 !important;
+  padding: 0 !important;
+  display: block !important;
+  text-align: center !important;
+}
+
+:global(.cm-image-widget img) {
+  max-width: 100% !important;
+  height: auto !important;
+  display: block !important;
+  border-radius: 6px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+  cursor: pointer !important;
+  margin: 0 auto !important;
+  transition: opacity 0.2s ease !important;
+}
+
+:global(.cm-image-widget img:hover) {
+  opacity: 0.8 !important;
+}
+
+/* Dark mode support for shadow */
+:global([data-theme="dark"] .cm-image-widget img) {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
 </style>
 
 <div class="wrapper" bind:this={container}></div>

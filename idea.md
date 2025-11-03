@@ -46,8 +46,8 @@
 - Bracket auto-close and list-continuation on Enter implemented in editor keymap.
 - Basic styling and layout with CSS variables for theming and CodeMirror theme integration.
 - Scrollbar theming added and an optional `.hide-scrollbar` utility.
-
 - Light icon replaced with clearer theme SVG (theme icon updated).
+- Image support added: Both markdown syntax `![alt](src)` and Ctrl+V paste functionality with local storage.
 - File action buttons (rename/delete/export) moved to Home cards and hidden in file view.
 - Topbar no longer shows file tabs; only a Home button remains on the topbar.
 - Rename flow hides the `.md` extension in the input and the "always skip" prompt option is handled in-app.

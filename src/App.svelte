@@ -24,6 +24,10 @@ let undoTimer: any = null;
 
 function saveFiles() {
   localStorage.setItem('ia:files', JSON.stringify(files));
+  // Clean up unused images periodically
+  if (Math.random() < 0.1) { // 10% chance on each save
+    cleanupUnusedImages();
+  }
 }
 
 function loadFiles() {
@@ -200,7 +204,6 @@ function toggleTheme() {
   localStorage.setItem('ia:theme', theme);
   document.documentElement.setAttribute('data-theme', theme);
 }
-
 let showSettings = false;
 let editorFont = localStorage.getItem('ia:font') || "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial";
 let editorSpellcheck = localStorage.getItem('ia:spellcheck') === 'true';
