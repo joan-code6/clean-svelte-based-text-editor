@@ -24,10 +24,6 @@ let undoTimer: any = null;
 
 function saveFiles() {
   localStorage.setItem('ia:files', JSON.stringify(files));
-  // Clean up unused images periodically
-  if (Math.random() < 0.1) { // 10% chance on each save
-    cleanupUnusedImages();
-  }
 }
 
 function loadFiles() {
